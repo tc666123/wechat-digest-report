@@ -211,7 +211,7 @@ main{padding:1.6rem 0 4rem}
     <span class="seal">摘</span>
     <div>
       <h1>墨摘 <em>知识库工作台</em></h1>
-      <div class="gen">离线 · 生成于 2026-07-17 05:18:58 <span id="save-mode"></span></div>
+      <div class="gen">离线 · 生成于 2026-07-17 05:27:43 <span id="save-mode"></span></div>
     </div>
   </div>
   <nav class="tabs" id="tabs">
@@ -794,25 +794,57 @@ async function runAiCollection(name,arts){
   catch(e){ out.innerHTML=`<p class="muted">AI 调用失败：${esc(e.message)}</p>`; }
 }
 
-/* ─────────── 聊天上下文检索（关键词打分，纯本地） ─────────── */
+/* ─────────── 聊天上下文检索（日期识别 + 中英混合打分，纯本地） ─────────── */
 const STOPWORDS = new Set(["的","了","是","在","和","与","有","这","那","什么","怎么","如何","一下","关于","请","帮我","我想","请问","一篇","那篇","这篇","两篇","文章","公众号"]);
-function tokenize(q){ return (q||"").toLowerCase().replace(/[，。？！,.?!、"“”‘’()（）【】]/g," ").split(/\s+/).filter(w=>w.length>=2&&!STOPWORDS.has(w)); }
+// 英文/数字词（空格切词即可覆盖）
+function tokenizeWords(q){ return (q||"").toLowerCase().replace(/[，。？！,.?!、"“”‘’()（）【】]/g," ").split(/\s+/).filter(w=>w.length>=2&&!STOPWORDS.has(w)); }
+// 中文没有空格分词边界，退化成字符二元组做模糊匹配
+function bigrams(s){ s=(s||"").toLowerCase(); const g=[]; for(let i=0;i<s.length-1;i++){ const p=s.slice(i,i+2); if(!/^[\s，。？！,.?!、"“”‘’()（）【】]+$/.test(p))g.push(p); } return g; }
+// 识别query里的日期，返回 {full:"YYYY-MM-DD"} 或 {mmdd:"MM-DD"}（未指定年份时按月日匹配任意年份）
+function extractDateQuery(q){
+  let m=q.match(/(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})/);
+  if(m)return {full:`${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`};
+  m=q.match(/(\d{1,2})[-/月](\d{1,2})[日号]?/);
+  if(m)return {mmdd:`${m[1].padStart(2,"0")}-${m[2].padStart(2,"0")}`};
+  if(/今天|今日/.test(q))return {full:LAST_SYNC_DATE};
+  return null;
+}
 function searchRelevantArticles(query,limit){
-  const toks=tokenize(query); if(!toks.length)return ARTS.slice(0,limit||6);
+  limit=limit||6;
+  const dateQ=extractDateQuery(query);
+  if(dateQ){
+    const hit=ARTS.filter(a=>{ const pd=a.publishDate||""; return dateQ.full?pd===dateQ.full:pd.slice(5)===dateQ.mmdd; });
+    if(hit.length)return hit.slice(0,Math.max(limit,hit.length>limit?limit:hit.length));
+    // 没有该日期的文章——仍然继续走关键词检索兜底，但会在 buildContextBlock 里明确说明该日期查无记录
+  }
+  const words=tokenizeWords(query); const bg=bigrams(query.replace(/\s+/g,""));
+  if(!words.length&&!bg.length)return ARTS.slice(0,limit);
   const scored=ARTS.map(a=>{
     const hay={title:(a.title||"").toLowerCase(),tags:((a.analysis&&a.analysis.tags)||[]).join(" ").toLowerCase(),
       acc:(a.account||"").toLowerCase(),digest:(a.digest||"").toLowerCase(),
       content:(a.content||"").toLowerCase().slice(0,3000)};
-    let s=0; for(const t of toks){ if(hay.title.includes(t))s+=5; if(hay.tags.includes(t))s+=4; if(hay.acc.includes(t))s+=3;
+    let s=0;
+    for(const t of words){ if(hay.title.includes(t))s+=5; if(hay.tags.includes(t))s+=4; if(hay.acc.includes(t))s+=3;
       if(hay.digest.includes(t))s+=2; if(hay.content.includes(t))s+=1; }
+    const titleBg=bigrams(hay.title), tagBg=bigrams(hay.tags), digestBg=bigrams(hay.digest);
+    for(const g of bg){ if(titleBg.includes(g))s+=2; if(tagBg.includes(g))s+=1.5; if(digestBg.includes(g))s+=1; }
     return {a,s};
-  }).filter(x=>x.s>0).sort((x,y)=>y.s-x.s).slice(0,limit||6);
+  }).filter(x=>x.s>0).sort((x,y)=>y.s-x.s).slice(0,limit);
   return scored.map(x=>x.a);
 }
 function buildContextBlock(query){
+  const dateQ=extractDateQuery(query);
+  if(dateQ){
+    const hit=ARTS.filter(a=>{ const pd=a.publishDate||""; return dateQ.full?pd===dateQ.full:pd.slice(5)===dateQ.mmdd; });
+    const label=dateQ.full||("每年 "+dateQ.mmdd);
+    if(!hit.length)return `（已按发布日期精确检索：知识库里没有 publishDate 等于 ${label} 的文章。注意这只代表当前知识库的采集范围内没有这一天的记录，不代表公众号那天实际没发文——请直接如实告知用户"知识库里没有这天的记录"，不要猜测或编造。）`;
+    return `（已按发布日期精确检索到 ${hit.length} 篇 publishDate = ${label} 的文章：）\n\n`+hit.map(a=>fmtArticleForContext(a)).join("\n---\n");
+  }
   const rel=searchRelevantArticles(query,6);
-  if(!rel.length)return "（本地关键词检索没有匹配到明显相关的文章，可能需要用户换个说法，或该内容确实不在知识库里。）";
-  return rel.map(a=>{
+  if(!rel.length)return "（本地检索没有匹配到明显相关的文章，可能需要用户换个说法，或该内容确实不在知识库里。）";
+  return rel.map(a=>fmtArticleForContext(a)).join("\n---\n");
+}
+function fmtArticleForContext(a){
     const an=a.analysis||{};
     const cross=(a.crossRefs||[]).map(id=>ARTBYID[id]&&ARTBYID[id].title).filter(Boolean);
     return `《${a.title}》｜公众号：${a.account}｜日期：${a.publishDate||"—"}｜主题：${(a.topicIds||[]).map(t=>TOPIC_NAME[t]||t).join("、")||"—"}\n`+
@@ -821,7 +853,6 @@ function buildContextBlock(query){
       (an.data&&an.data.length?`关键数据：${an.data.join("；")}\n`:"")+
       (an.tags&&an.tags.length?`标签：${an.tags.join("、")}\n`:"")+
       (cross.length?`与之关联的文章：${cross.join("、")}\n`:"");
-  }).join("\n---\n");
 }
 
 /* ─────────── settings modal ─────────── */
