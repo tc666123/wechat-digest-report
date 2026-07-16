@@ -211,7 +211,7 @@ main{padding:1.6rem 0 4rem}
     <span class="seal">摘</span>
     <div>
       <h1>墨摘 <em>知识库工作台</em></h1>
-      <div class="gen">离线 · 生成于 2026-07-17 04:47:42 <span id="save-mode"></span></div>
+      <div class="gen">离线 · 生成于 2026-07-17 05:09:30 <span id="save-mode"></span></div>
     </div>
   </div>
   <nav class="tabs" id="tabs">
@@ -234,17 +234,18 @@ main{padding:1.6rem 0 4rem}
 <div class="modal" id="settings-modal"><div class="box">
   <h3>Claude AI 设置</h3>
   <p class="muted" style="margin-top:-.4rem">不填也能用：页面默认只读 agent 预生成的拆解。填了 Key 才会启用右下角的「AI 问答」，浏览器直连 Anthropic API，不经过任何后端。Key 仅存本机 localStorage，绝不写入文件或知识库，也不会随报告一起同步。</p>
-  <div class="field"><label>Model</label>
-    <select id="set-model">
-      <option value="claude-sonnet-5">Claude Sonnet 5（推荐，均衡）</option>
-      <option value="claude-opus-4-8">Claude Opus 4.8（最强，更贵）</option>
-      <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5（最快最省）</option>
-      <option value="__custom__">自定义…</option>
+  <div class="field"><label>Provider</label>
+    <select id="set-provider">
+      <option value="claude">Claude（Anthropic，需自行充值）</option>
+      <option value="gemini">Gemini（Google AI Studio，免费额度）</option>
     </select>
+  </div>
+  <div class="field"><label>Model</label>
+    <select id="set-model"></select>
     <input id="set-model-custom" placeholder="填写完整 model id" style="margin-top:.4rem;display:none" />
   </div>
-  <div class="field"><label>API Key（console.anthropic.com 自行获取，仅本机 localStorage）</label><input id="set-key" type="password" placeholder="sk-ant-..." />
-    <div class="hint">清空并保存即可移除本机 Key。</div></div>
+  <div class="field"><label id="set-key-label">API Key（仅本机 localStorage）</label><input id="set-key" type="password" placeholder="sk-ant-... 或 AIza..." />
+    <div class="hint" id="set-key-hint">清空并保存即可移除本机 Key。</div></div>
   <div class="row-end"><button class="btn" id="set-cancel">取消</button><button class="btn primary" id="set-save">保存</button></div>
 </div></div>
 
@@ -291,7 +292,7 @@ const K_COLL="mozhai.collections", K_AI="mozhai.ai", K_AICACHE="mozhai.ai.analys
 // 由 kb.py serve（http://127.0.0.1）打开时 SERVER=true → 收藏夹自动存回 knowledge_base.json
 const SERVER = /^https?:$/.test(location.protocol);
 let collections = {};
-let aiCfg = LS.get(K_AI,{model:"claude-sonnet-5",key:""});
+let aiCfg = LS.get(K_AI,{provider:"claude",model:"claude-sonnet-5",key:""});
 let chatHistory = LS.get("mozhai.chat.history",[]);
 let aiCache = LS.get(K_AICACHE,{});   // {id: markdown}
 let curColl = LS.get(K_CUR,"");
@@ -742,6 +743,9 @@ const SYS_PROMPT="你是一名资深的中文内容分析师，擅长从公众�
 const CHAT_SYS_PROMPT="你是「墨摘」知识库的问答助手，服务对象是知识库所有者本人。下面会给你若干篇与用户问题相关的公众号文章片段（标题/公众号/日期/已有摘要/标签，必要时含正文节选），请只依据这些材料回答，引用文章时用《标题》标出。若要求总结某篇文章、比较多篇文章的关联，直接给出结论性的结构化回答（可用要点列表），不要复述你在做什么。若材料不足以回答，直说材料里没有覆盖，不要编造。";
 async function aiChat(messages,systemPrompt,onDelta){
   if(!aiConfigured())throw new Error("还没配置 API Key，点右上角 ⚙︎ 设置");
+  return aiCfg.provider==="gemini" ? geminiChat(messages,systemPrompt,onDelta) : claudeChat(messages,systemPrompt,onDelta);
+}
+async function claudeChat(messages,systemPrompt,onDelta){
   const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{
       "Content-Type":"application/json","x-api-key":aiCfg.key,"anthropic-version":"2023-06-01",
       "anthropic-dangerous-direct-browser-access":"true"},
@@ -753,6 +757,24 @@ async function aiChat(messages,systemPrompt,onDelta){
     for(const line of lines){ const t=line.trim(); if(!t.startsWith("data:"))continue; const d=t.slice(5).trim(); if(!d)continue;
       try{ const evt=JSON.parse(d); if(evt.type==="content_block_delta"&&evt.delta?.type==="text_delta"){ result+=evt.delta.text; onDelta&&onDelta(result); }
         else if(evt.type==="error"){ throw new Error(evt.error?.message||"stream error"); } }catch(err){ if(err instanceof SyntaxError)continue; throw err; } } }
+  if(!result.trim())throw new Error("模型未返回内容");
+  return result;
+}
+async function geminiChat(messages,systemPrompt,onDelta){
+  const model=aiCfg.model||"gemini-2.5-flash";
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(aiCfg.key)}`;
+  const contents=messages.map(m=>({role:m.role==="assistant"?"model":"user",parts:[{text:m.content}]}));
+  const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({system_instruction:{parts:[{text:systemPrompt}]},contents})});
+  if(!res.ok){ const e=await res.json().catch(()=>({})); const msg=Array.isArray(e)?e[0]?.error?.message:e.error?.message; throw new Error(msg||("HTTP "+res.status)); }
+  const reader=res.body.getReader(); const dec=new TextDecoder(); let buf="",result="";
+  while(true){ const {done,value}=await reader.read(); if(done)break; buf+=dec.decode(value,{stream:true});
+    const lines=buf.split("\n"); buf=lines.pop();
+    for(const line of lines){ const t=line.trim(); if(!t.startsWith("data:"))continue; const d=t.slice(5).trim(); if(!d)continue;
+      try{ const evt=JSON.parse(d); const piece=evt.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("")||"";
+        if(piece){ result+=piece; onDelta&&onDelta(result); }
+        const blockReason=evt.promptFeedback?.blockReason; if(blockReason)throw new Error("被安全策略拦截："+blockReason); }
+      catch(err){ if(err instanceof SyntaxError)continue; throw err; } } }
   if(!result.trim())throw new Error("模型未返回内容");
   return result;
 }
@@ -804,23 +826,44 @@ function buildContextBlock(query){
 
 /* ─────────── settings modal ─────────── */
 const sm=$("#settings-modal");
-const KNOWN_MODELS=["claude-sonnet-5","claude-opus-4-8","claude-haiku-4-5-20251001"];
+const MODELS_BY_PROVIDER={
+  claude:[["claude-sonnet-5","Claude Sonnet 5（推荐，均衡）"],["claude-opus-4-8","Claude Opus 4.8（最强，更贵）"],["claude-haiku-4-5-20251001","Claude Haiku 4.5（最快最省）"]],
+  gemini:[["gemini-2.5-flash","Gemini 2.5 Flash（推荐，免费额度）"],["gemini-2.5-pro","Gemini 2.5 Pro（更强，免费额度较少）"],["gemini-2.0-flash","Gemini 2.0 Flash"]],
+};
+const KEY_HINT_BY_PROVIDER={
+  claude:{ph:"sk-ant-...",label:"API Key（console.anthropic.com 自行获取，仅本机 localStorage）"},
+  gemini:{ph:"AIza...",label:"API Key（aistudio.google.com 免费获取，仅本机 localStorage）"},
+};
+function populateModelOptions(provider){
+  const sel=$("#set-model"); sel.innerHTML="";
+  (MODELS_BY_PROVIDER[provider]||[]).forEach(([v,label])=>{ const o=document.createElement("option"); o.value=v; o.textContent=label; sel.appendChild(o); });
+  const custom=document.createElement("option"); custom.value="__custom__"; custom.textContent="自定义…"; sel.appendChild(custom);
+}
 function syncModelUI(){
-  const known=KNOWN_MODELS.includes(aiCfg.model);
+  const provider=aiCfg.provider||"claude";
+  $("#set-provider").value=provider;
+  populateModelOptions(provider);
+  const known=(MODELS_BY_PROVIDER[provider]||[]).some(([v])=>v===aiCfg.model);
   $("#set-model").value=known?aiCfg.model:"__custom__";
   $("#set-model-custom").style.display=known?"none":"block";
   $("#set-model-custom").value=known?"":(aiCfg.model||"");
+  const kh=KEY_HINT_BY_PROVIDER[provider]||KEY_HINT_BY_PROVIDER.claude;
+  $("#set-key").placeholder=kh.ph; $("#set-key-label").textContent=kh.label;
 }
 $("#open-settings").onclick=()=>{ syncModelUI(); $("#set-key").value=aiCfg.key||""; sm.classList.add("on"); };
+$("#set-provider").onchange=()=>{ populateModelOptions($("#set-provider").value); $("#set-model-custom").style.display="none";
+  const kh=KEY_HINT_BY_PROVIDER[$("#set-provider").value]||KEY_HINT_BY_PROVIDER.claude; $("#set-key").placeholder=kh.ph; $("#set-key-label").textContent=kh.label; };
 $("#set-model").onchange=()=>{ $("#set-model-custom").style.display=$("#set-model").value==="__custom__"?"block":"none"; };
 $("#set-cancel").onclick=()=>sm.classList.remove("on");
 sm.onclick=e=>{ if(e.target===sm)sm.classList.remove("on"); };
 $("#set-save").onclick=()=>{
+  const provider=$("#set-provider").value;
   const sel=$("#set-model").value;
   const model=sel==="__custom__"?$("#set-model-custom").value.trim():sel;
-  aiCfg={model:model||"claude-sonnet-5",key:$("#set-key").value.trim()};
+  const fallback=(MODELS_BY_PROVIDER[provider]||MODELS_BY_PROVIDER.claude)[0][0];
+  aiCfg={provider,model:model||fallback,key:$("#set-key").value.trim()};
   LS.set(K_AI,aiCfg); sm.classList.remove("on");
-  $("#chat-model-tag").textContent=aiConfigured()?("· "+aiCfg.model):"";
+  $("#chat-model-tag").textContent=aiConfigured()?("· "+aiCfg.provider+"/"+aiCfg.model):"";
   toast(aiConfigured()?"已保存，AI 问答已启用":"已保存（还没填 Key，AI 问答未启用）");
 };
 
@@ -832,7 +875,7 @@ function renderChatHistory(){
   chatMsgs.scrollTop=chatMsgs.scrollHeight;
 }
 function addChatBubble(role,text){ const d=document.createElement("div"); d.className="chat-msg "+role; d.innerHTML=`<div class="bubble">${fmtMd(text)}</div>`; chatMsgs.appendChild(d); chatMsgs.scrollTop=chatMsgs.scrollHeight; return d.querySelector(".bubble"); }
-$("#open-chat").onclick=()=>{ chatPanel.classList.toggle("on"); if(chatPanel.classList.contains("on")){ $("#chat-model-tag").textContent=aiConfigured()?("· "+aiCfg.model):""; chatInput.focus(); } };
+$("#open-chat").onclick=()=>{ chatPanel.classList.toggle("on"); if(chatPanel.classList.contains("on")){ $("#chat-model-tag").textContent=aiConfigured()?("· "+aiCfg.provider+"/"+aiCfg.model):""; chatInput.focus(); } };
 $("#chat-close").onclick=()=>chatPanel.classList.remove("on");
 $("#chat-clear").onclick=()=>{ chatHistory=[]; LS.set("mozhai.chat.history",chatHistory); renderChatHistory(); toast("已清空对话"); };
 async function sendChat(){
