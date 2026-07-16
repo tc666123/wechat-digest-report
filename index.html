@@ -211,7 +211,7 @@ main{padding:1.6rem 0 4rem}
     <span class="seal">摘</span>
     <div>
       <h1>墨摘 <em>知识库工作台</em></h1>
-      <div class="gen">离线 · 生成于 2026-07-17 05:09:30 <span id="save-mode"></span></div>
+      <div class="gen">离线 · 生成于 2026-07-17 05:18:58 <span id="save-mode"></span></div>
     </div>
   </div>
   <nav class="tabs" id="tabs">
@@ -761,7 +761,7 @@ async function claudeChat(messages,systemPrompt,onDelta){
   return result;
 }
 async function geminiChat(messages,systemPrompt,onDelta){
-  const model=aiCfg.model||"gemini-2.5-flash";
+  const model=aiCfg.model||"gemini-3.5-flash";
   const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(aiCfg.key)}`;
   const contents=messages.map(m=>({role:m.role==="assistant"?"model":"user",parts:[{text:m.content}]}));
   const res=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},
@@ -828,7 +828,7 @@ function buildContextBlock(query){
 const sm=$("#settings-modal");
 const MODELS_BY_PROVIDER={
   claude:[["claude-sonnet-5","Claude Sonnet 5（推荐，均衡）"],["claude-opus-4-8","Claude Opus 4.8（最强，更贵）"],["claude-haiku-4-5-20251001","Claude Haiku 4.5（最快最省）"]],
-  gemini:[["gemini-2.5-flash","Gemini 2.5 Flash（推荐，免费额度）"],["gemini-2.5-pro","Gemini 2.5 Pro（更强，免费额度较少）"],["gemini-2.0-flash","Gemini 2.0 Flash"]],
+  gemini:[["gemini-3.5-flash","Gemini 3.5 Flash（推荐，免费额度）"],["gemini-3.1-flash-lite","Gemini 3.1 Flash-Lite（最快最省，免费额度）"],["gemini-3.1-pro","Gemini 3.1 Pro（更强，付费）"]],
 };
 const KEY_HINT_BY_PROVIDER={
   claude:{ph:"sk-ant-...",label:"API Key（console.anthropic.com 自行获取，仅本机 localStorage）"},
