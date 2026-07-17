@@ -211,7 +211,7 @@ main{padding:1.6rem 0 4rem}
     <span class="seal">摘</span>
     <div>
       <h1>墨摘 <em>知识库工作台</em></h1>
-      <div class="gen">离线 · 生成于 2026-07-17 16:25:10 <span id="save-mode"></span></div>
+      <div class="gen">离线 · 生成于 2026-07-17 16:29:59 <span id="save-mode"></span></div>
     </div>
   </div>
   <nav class="tabs" id="tabs">
@@ -846,9 +846,32 @@ function knowledgeBaseOverview(){
     `知识库最近一次同步更新：${DATA.updatedAt||"—"}`;
 }
 const ACCOUNT_NAMES=[...new Set(ARTS.map(a=>a.account).filter(Boolean))];
-function extractAccountMentions(q){ const ql=(q||"").toLowerCase(); return ACCOUNT_NAMES.filter(n=>n&&ql.includes(n.toLowerCase())); }
-function extractTopicMentions(q){ const ql=(q||"").toLowerCase();
-  return TOPICS.filter(t=>ql.includes((t.name||"").toLowerCase())||(t.keywords||[]).some(k=>k&&ql.includes(k.toLowerCase()))); }
+// 把"OxfordCSSA牛津学联"这类中英混合名拆成连续的中文段/拉丁段，双向做子串匹配——
+// 覆盖"问题只提到全名里的一截"（牛津学联⊂OxfordCSSA牛津学联）和"问题提到全名"两种情况
+function nameSegments(n){ return ((n||"").match(/[一-龥]{2,}|[A-Za-z0-9]{2,}/g)||[]); }
+const ACCOUNT_ALIASES={ // 官方账号名和常见俗称词汇完全不重叠的，单独补一份别名
+  "CSSA Cambridge":["剑桥学联","剑桥中国学联"],
+  "世界人工智能大会":["WAIC"],
+  "香港大学":["港大"],
+};
+function extractAccountMentions(q){
+  const ql=(q||"").toLowerCase();
+  return ACCOUNT_NAMES.filter(n=>{
+    if(!n)return false;
+    if(ql.includes(n.toLowerCase()))return true; // 问题包含完整账号名
+    if(nameSegments(n).some(seg=>seg.length>=2&&ql.includes(seg.toLowerCase())))return true; // 问题包含账号名的一截
+    return (ACCOUNT_ALIASES[n]||[]).some(al=>ql.includes(al.toLowerCase())); // 常见俗称
+  });
+}
+function extractTopicMentions(q){
+  const ql=(q||"").toLowerCase();
+  return TOPICS.filter(t=>{
+    const name=(t.name||"");
+    if(ql.includes(name.toLowerCase()))return true;
+    if(nameSegments(name).some(seg=>seg.length>=2&&ql.includes(seg.toLowerCase())))return true;
+    return (t.keywords||[]).some(k=>k&&ql.includes(k.toLowerCase()));
+  });
+}
 const MAX_CTX_ARTS=40;
 function buildContextBlock(query){
   const overview=knowledgeBaseOverview();
