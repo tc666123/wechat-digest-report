@@ -211,7 +211,7 @@ main{padding:1.6rem 0 4rem}
     <span class="seal">摘</span>
     <div>
       <h1>墨摘 <em>知识库工作台</em></h1>
-      <div class="gen">离线 · 生成于 2026-07-17 05:34:06 <span id="save-mode"></span></div>
+      <div class="gen">离线 · 生成于 2026-07-17 16:25:10 <span id="save-mode"></span></div>
     </div>
   </div>
   <nav class="tabs" id="tabs">
@@ -260,7 +260,7 @@ main{padding:1.6rem 0 4rem}
     </div>
   </div>
   <div class="chat-msgs" id="chat-msgs">
-    <div class="chat-msg assistant"><div class="bubble">你好，我是这份知识库的问答助手。可以问我「总结一下 XX 那篇」「这两篇报道有什么关联」「最近关于 AI 治理的文章有哪些」这类问题。<br><span class="muted" style="font-size:.75rem">首次使用请先点右上角 ⚙︎ 填入你自己的 Claude API Key。</span></div></div>
+    <div class="chat-msg assistant"><div class="bubble">你好，我是这份知识库的问答助手。可以问我「第一财经最近写了什么」「对比一下 CSSA Cambridge 和牛津学联最近的活动」「AI 治理相关的文章有哪些」这类问题，公众号名/主题名/日期我都能精确定位。<br><span class="muted" style="font-size:.75rem">首次使用请先点右上角 ⚙︎ 填入你自己的 Claude API Key。</span></div></div>
   </div>
   <div class="chat-input-row">
     <textarea id="chat-input" rows="2" placeholder="问点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
@@ -740,7 +740,7 @@ function renderBreakdown(bd){
 /* ─────────── AI：浏览器直连 Anthropic（无需后端） ─────────── */
 function aiConfigured(){ return !!(aiCfg.key||"").trim(); }
 const SYS_PROMPT="你是一名资深的中文内容分析师，擅长从公众号文章中快速提炼结构化要点。输出必须为简洁、信息密度高的 Markdown。";
-const CHAT_SYS_PROMPT="你是「墨摘」知识库的问答助手，服务对象是知识库所有者本人。下面会给你若干篇与用户问题相关的公众号文章片段（标题/公众号/日期/已有摘要/标签，必要时含正文节选），请只依据这些材料回答，引用文章时用《标题》标出。若要求总结某篇文章、比较多篇文章的关联，直接给出结论性的结构化回答（可用要点列表），不要复述你在做什么。若材料不足以回答，直说材料里没有覆盖，不要编造。";
+const CHAT_SYS_PROMPT="你是「墨摘」知识库的问答助手，服务对象是知识库所有者本人。每次对话开头会给你一份【知识库全局统计】（总篇数/各公众号篇数/各主题篇数/时间范围），这个数字是准确权威的，回答统计类问题直接用它。如果用户问题里提到了具体公众号名称、主题名称或日期，本地检索系统已经按这些条件做了精确筛选，把该范围内的全部文章（不是挑几篇样本）都给你了——这时候你看到的就是该公众号/主题/日期下的完整文章列表，可以放心地做统计、总结、对比、找关联，不需要怀疑材料不全（除非材料里明确写了因为太长被截断，这种情况下按截断提示如实说明）。如果问题没有命中具体公众号/主题/日期，材料就是关键词模糊检索出的一批样本文章，不代表全部，这种情况下不要说'一共有多少篇'这类统计结论。引用文章时用《标题》标出。若要求总结某篇文章、比较多篇文章的关联，直接给出结论性的结构化回答（可用要点列表），不要复述你在做什么。若材料确实不足以回答，直说材料里没有覆盖，不要编造或做没有依据的推测（比如'可能是同步失败'）。";
 async function aiChat(messages,systemPrompt,onDelta){
   if(!aiConfigured())throw new Error("还没配置 API Key，点右上角 ⚙︎ 设置");
   return aiCfg.provider==="gemini" ? geminiChat(messages,systemPrompt,onDelta) : claudeChat(messages,systemPrompt,onDelta);
@@ -845,16 +845,32 @@ function knowledgeBaseOverview(){
     `文章发布日期范围：${dates[0]||"—"} ~ ${dates[dates.length-1]||"—"}\n`+
     `知识库最近一次同步更新：${DATA.updatedAt||"—"}`;
 }
+const ACCOUNT_NAMES=[...new Set(ARTS.map(a=>a.account).filter(Boolean))];
+function extractAccountMentions(q){ const ql=(q||"").toLowerCase(); return ACCOUNT_NAMES.filter(n=>n&&ql.includes(n.toLowerCase())); }
+function extractTopicMentions(q){ const ql=(q||"").toLowerCase();
+  return TOPICS.filter(t=>ql.includes((t.name||"").toLowerCase())||(t.keywords||[]).some(k=>k&&ql.includes(k.toLowerCase()))); }
+const MAX_CTX_ARTS=40;
 function buildContextBlock(query){
   const overview=knowledgeBaseOverview();
   const dateQ=extractDateQuery(query);
-  if(dateQ){
-    const hit=ARTS.filter(a=>{ const pd=a.publishDate||""; return dateQ.full?pd===dateQ.full:pd.slice(5)===dateQ.mmdd; });
-    const label=dateQ.full||("每年 "+dateQ.mmdd);
-    if(!hit.length)return overview+`\n\n（已按发布日期精确检索：知识库里没有 publishDate 等于 ${label} 的文章。注意这只代表当前知识库的采集范围内没有这一天的记录，不代表公众号那天实际没发文——请直接如实告知用户"知识库里没有这天的记录"，不要猜测或编造。）`;
-    return overview+`\n\n（已按发布日期精确检索到 ${hit.length} 篇 publishDate = ${label} 的文章：）\n\n`+hit.map(a=>fmtArticleForContext(a)).join("\n---\n");
+  const accMatches=extractAccountMentions(query);
+  const topicMatches=extractTopicMentions(query);
+
+  // 命中「日期 / 公众号名 / 主题名」中任意一种 → 精确筛选，覆盖该范围内的全部文章（而不是只挑关键词分最高的几篇）
+  if(dateQ||accMatches.length||topicMatches.length){
+    let pool=ARTS, filters=[];
+    if(dateQ){ const label=dateQ.full||("每年 "+dateQ.mmdd);
+      pool=pool.filter(a=>{ const pd=a.publishDate||""; return dateQ.full?pd===dateQ.full:pd.slice(5)===dateQ.mmdd; });
+      filters.push("日期="+label); }
+    if(accMatches.length){ pool=pool.filter(a=>accMatches.includes(a.account)); filters.push("公众号="+accMatches.join("/")); }
+    if(topicMatches.length){ const tids=topicMatches.map(t=>t.id); pool=pool.filter(a=>(a.topicIds||[]).some(id=>tids.includes(id))); filters.push("主题="+topicMatches.map(t=>t.name).join("/")); }
+    if(!pool.length)return overview+`\n\n（已按【${filters.join("，")}】精确筛选：知识库里没有符合条件的文章。请直接如实告知用户没有找到，不要猜测或编造，也不要说"可能是同步失败"这类没有依据的推测。）`;
+    pool=pool.slice().sort((x,y)=>(y.publishDate||"").localeCompare(x.publishDate||""));
+    const truncated=pool.length>MAX_CTX_ARTS;
+    const shown=truncated?pool.slice(0,MAX_CTX_ARTS):pool;
+    return overview+`\n\n（已按【${filters.join("，")}】精确筛选到 ${pool.length} 篇${truncated?`，因材料太长只展示最新 ${MAX_CTX_ARTS} 篇，但请如实告知用户真实总数是 ${pool.length} 篇`:""}：）\n\n`+shown.map(a=>fmtArticleForContext(a)).join("\n---\n");
   }
-  const rel=searchRelevantArticles(query,6);
+  const rel=searchRelevantArticles(query,8);
   if(!rel.length)return overview+"\n\n（本次问题的关键词本地检索没有匹配到明显相关的具体文章，如果问题本身是统计类问题，直接用上面的全局统计回答即可；如果是内容类问题，可能需要用户换个说法，或该内容确实不在知识库里。）";
   return overview+"\n\n"+rel.map(a=>fmtArticleForContext(a)).join("\n---\n");
 }
@@ -915,7 +931,7 @@ $("#set-save").onclick=()=>{
 /* ─────────── chat panel ─────────── */
 const chatPanel=$("#chat-panel"), chatMsgs=$("#chat-msgs"), chatInput=$("#chat-input");
 function renderChatHistory(){
-  chatMsgs.innerHTML='<div class="chat-msg assistant"><div class="bubble">你好，我是这份知识库的问答助手。可以问我「总结一下 XX 那篇」「这两篇报道有什么关联」「最近关于 AI 治理的文章有哪些」这类问题。<br><span class="muted" style="font-size:.75rem">首次使用请先点右上角 ⚙︎ 填入你自己的 Claude API Key。</span></div></div>'
+  chatMsgs.innerHTML='<div class="chat-msg assistant"><div class="bubble">你好，我是这份知识库的问答助手。可以问我「第一财经最近写了什么」「对比一下 CSSA Cambridge 和牛津学联最近的活动」「AI 治理相关的文章有哪些」这类问题，公众号名/主题名/日期我都能精确定位。<br><span class="muted" style="font-size:.75rem">首次使用请先点右上角 ⚙︎ 填入你自己的 Claude API Key。</span></div></div>'
     + chatHistory.map(m=>`<div class="chat-msg ${m.role}"><div class="bubble">${fmtMd(m.content)}</div></div>`).join("");
   chatMsgs.scrollTop=chatMsgs.scrollHeight;
 }
