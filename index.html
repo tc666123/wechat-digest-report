@@ -225,7 +225,7 @@ main{padding:1.6rem 0 4rem}
     <span class="seal">摘</span>
     <div>
       <h1>公众之光 <em>知识库工作台</em></h1>
-      <div class="gen">离线 · 生成于 2026-07-18 16:17:39 <span id="save-mode"></span></div>
+      <div class="gen">离线 · 生成于 2026-07-18 16:58:12 <span id="save-mode"></span></div>
     </div>
   </div>
   <nav class="tabs" id="tabs">
@@ -291,7 +291,6 @@ main{padding:1.6rem 0 4rem}
 const DATA = (()=>{ try{ return JSON.parse(document.getElementById("kb-data").textContent); }catch(e){ return {articles:{},topics:[],tags:{},collections:{}}; } })();
 const ARTS = Object.values(DATA.articles||{});
 const LAST_SYNC_DATE = (DATA.updatedAt||"").slice(0,10);
-const isNewArt = a => !!(a.collectedAt && a.collectedAt.slice(0,10)===LAST_SYNC_DATE);
 const ARTBYID = DATA.articles||{};
 const TOPICS = DATA.topics||[];
 const TAGS = DATA.tags||{};
@@ -303,6 +302,22 @@ const LS = {
   set(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch{} }
 };
 const K_COLL="mozhai.collections", K_AI="mozhai.ai", K_AICACHE="mozhai.ai.analysis", K_CUR="mozhai.curColl";
+const K_READ="mozhai.read.ids", K_READ_INIT="mozhai.read.init";
+// "🆕新采集" = 尚未被本机浏览过的文章。首次上线该功能时，把当前已有文章一次性标为已读，
+// 避免历史文章突然被全部标"新"；此后新同步进来的文章默认未读，直到用户点开查看原文/拆解才消失。
+let readIds = new Set(LS.get(K_READ,[])||[]);
+if(!LS.get(K_READ_INIT,false)){
+  ARTS.forEach(a=>readIds.add(a.id));
+  LS.set(K_READ,[...readIds]);
+  LS.set(K_READ_INIT,true);
+}
+const isNewArt = a => !readIds.has(a.id);
+function markRead(id){
+  if(readIds.has(id))return;
+  readIds.add(id);
+  LS.set(K_READ,[...readIds]);
+  document.querySelectorAll(`.art[data-id="${id.replace(/"/g,'\\"')}"] .badge.new`).forEach(el=>el.remove());
+}
 // 由 kb.py serve（http://127.0.0.1）打开时 SERVER=true → 收藏夹自动存回 knowledge_base.json
 const SERVER = /^https?:$/.test(location.protocol);
 let collections = {};
@@ -391,7 +406,7 @@ function renderOverview(){
       ${tile("正文总字",chars>9999?(chars/10000).toFixed(1)+"万":chars)}
     </div>
     <div class="panel"><h3>时间范围</h3><p class="muted">${dates[0]||"—"} &nbsp;~&nbsp; ${dates[dates.length-1]||"—"}　·　已拆解占比 ${n?Math.round(analyzed/n*100):0}%</p>
-      ${newN?`<p class="muted">🆕 最近一次采集（${esc(LAST_SYNC_DATE)}）新增 <b>${newN}</b> 篇，<a href="#" id="goto-new-link">点此在文章库中查看</a></p>`:`<p class="muted">本次未发现新文章，知识库与上次同步保持一致。</p>`}</div>
+      ${newN?`<p class="muted">🆕 还有 <b>${newN}</b> 篇未读文章，<a href="#" id="goto-new-link">点此在文章库中查看</a></p>`:`<p class="muted">目前没有未读文章。</p>`}</div>
     <div class="panel"><h3>公众号分布</h3>${accArr.length?accArr.slice(0,14).map(([k,v])=>`
       <div class="bar-row"><span class="name">${esc(k)}</span><span class="bar"><i style="width:${v/maxAcc*100}%"></i></span><span class="num">${v}</span></div>`).join(""):'<p class="muted">暂无数据</p>'}</div>
     ${TOPICS.length?`<div class="panel"><h3>主题分布</h3>${TOPICS.map(t=>`<div class="bar-row"><span class="name">${esc(t.name)}</span><span class="bar"><i style="width:${(t.articleIds||[]).length/Math.max(1,n)*100}%"></i></span><span class="num">${(t.articleIds||[]).length}</span></div>`).join("")}</div>`:""}
@@ -416,7 +431,7 @@ function renderLibrary(){
       <select id="f-topic"><option value="">全部主题</option>${opt(TOPICS,filt.topic,t=>t.name)}</select>
       <select id="f-tag"><option value="">全部标签</option>${opt(Object.keys(TAGS),filt.tag)}</select>
       <label><input type="checkbox" id="f-an" ${filt.analyzed?"checked":""}/> 仅已拆解</label>
-      <label><input type="checkbox" id="f-new" ${filt.onlyNew?"checked":""}/> 🆕 只看本次新增${LAST_SYNC_DATE?` (${esc(LAST_SYNC_DATE)})`:""}</label>
+      <label><input type="checkbox" id="f-new" ${filt.onlyNew?"checked":""}/> 🆕 只看未读</label>
     </div>
     <div class="toolbar" style="margin-top:-.4rem">
       <span class="muted">当前收藏夹：</span>
@@ -480,7 +495,7 @@ function renderList(){
     return `
     <article class="art${inColl?" starred":""}" data-id="${esc(a.id)}">
       <div class="art-meta">
-        ${isNewArt(a)?'<span class="badge new">🆕 新采集</span>':""}
+        ${isNewArt(a)?'<span class="badge new">🆕 未读</span>':""}
         <span>${esc(a.account)||"(未知公众号)"}</span><span>${esc(a.publishDate)||"----"}</span>
         <span>${(a.content||"").length} 字</span>${(a.images||[]).length?`<span>${a.images.length} 图</span>`:""}
         <span class="badge ${a.analyzedAt?"ok":"no"}">${a.analyzedAt?"已拆解":(aiCache[a.id]?"AI拆解":"未拆解")}</span>
@@ -503,8 +518,8 @@ $("#view-library").addEventListener("click",async e=>{
   const btn=e.target.closest("[data-act]"); if(!btn)return;
   const art=btn.closest(".art"); const id=art&&art.dataset.id; const a=ARTBYID[id];
   const act=btn.dataset.act;
-  if(act==="expand"){ const p=art.querySelector(".analysis"); p.classList.toggle("on"); btn.textContent=p.classList.contains("on")?"收起":"查看拆解"; }
-  else if(act==="raw"){ const p=art.querySelector(".raw"); if(!p.dataset.filled){ p.innerHTML=rawHtml(a); p.dataset.filled="1"; } p.classList.toggle("on"); btn.textContent=p.classList.contains("on")?"收起原文":("查看原文"+((a.images||[]).length?` · ${a.images.length}图`:"")); }
+  if(act==="expand"){ const p=art.querySelector(".analysis"); p.classList.toggle("on"); btn.textContent=p.classList.contains("on")?"收起":"查看拆解"; markRead(id); }
+  else if(act==="raw"){ const p=art.querySelector(".raw"); if(!p.dataset.filled){ p.innerHTML=rawHtml(a); p.dataset.filled="1"; } p.classList.toggle("on"); btn.textContent=p.classList.contains("on")?"收起原文":("查看原文"+((a.images||[]).length?` · ${a.images.length}图`:"")); markRead(id); }
   else if(act==="star"){ addToCollection(id); }
   else if(act==="ai"){ runAiArticle(a,art.querySelector(".analysis")); }
 });
